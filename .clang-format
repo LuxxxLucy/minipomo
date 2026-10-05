@@ -1,0 +1,15 @@
+BasedOnStyle: Google
+IndentWidth: 4
+BreakBeforeBraces: Linux
+PointerAlignment: Right
+DerivePointerAlignment: false
+ColumnLimit: 80
+InsertBraces: true
+SortIncludes: false
+Cpp11BracedListStyle: false
+# read EXPORT and IMPORT as attributes so they stay on their own line
+Macros:
+  - EXPORT(x)=[[nodiscard]]
+  - IMPORT(x)=[[nodiscard]]
+BreakAfterAttributes: Always
+AllowShortFunctionsOnASingleLine: None
