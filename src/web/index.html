@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniPomo</title>
+<style>
+html, body { margin: 0; background: #ba4949; }
+body { position: relative; }
+canvas { display: block; touch-action: manipulation; }
+.field {
+  position: absolute; display: none; box-sizing: border-box; margin: 0;
+  border: none; outline: none; background: transparent; color: #555;
+}
+.field::placeholder { color: #bbb; font-style: italic; }
+#title { padding: 0; font: bold 22px 'Arial Rounded MT Bold', ArialRounded, system-ui, sans-serif; }
+#note { padding: 10px; resize: none; font: 15px system-ui, -apple-system, sans-serif; }
+</style>
+</head>
+<body>
+<canvas id="app"></canvas>
+<input id="title" class="field" placeholder="What are you working on?" autocomplete="off">
+<textarea id="note" class="field" placeholder="Some notes..."></textarea>
+<script type="module" src="main.js"></script>
+</body>
+</html>
