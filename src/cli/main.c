@@ -204,7 +204,7 @@ static void draw_task(int row, int col, int width, int i, struct rgb color,
     printf(t->done ? ICON_CHECK RESET DIM STRIKE : RESET ICON_OPEN BOLD);
     print_padded(t->title, width - ROW_FIXED_W);
     printf(RESET DIM "%7s %5s " RESET, focus, count);
-    printf(t->running ? ICON_PAUSE : ICON_PLAY);
+    printf(!minipomo_can_play(t) ? "  " : t->running ? ICON_PAUSE : ICON_PLAY);
 }
 
 static void draw(double now)
@@ -239,7 +239,7 @@ static void draw(double now)
 
     const char *button = minipomo_running(&pomo) ? TEXT_PAUSE : TEXT_START;
     move_to(BUTTON_ROW, (cols - (int)strlen(button)) / 2 + 1);
-    if (pomo.task_count) {
+    if (minipomo_running(&pomo) || minipomo_can_start(&pomo)) {
         fg(color);
         printf(BOLD "%s" RESET, button);
     } else {
@@ -444,8 +444,9 @@ static void on_key(int key, double now)
             }
             break;
         case 'c':
-            if (confirm(TEXT_RESET_STAT)) {
-                minipomo_reset_stat(&pomo);
+            if (confirm(TEXT_CLEAR)) {
+                minipomo_init(&pomo);
+                selected = 0;
             }
             break;
         case 'q':

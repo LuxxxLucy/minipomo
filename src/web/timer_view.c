@@ -23,7 +23,7 @@ static void type_tab(const struct view *v, enum minipomo_type type)
 static void start_button(const struct view *v)
 {
     bool running = minipomo_running(v->pomo);
-    bool enabled = v->pomo->task_count > 0;
+    bool enabled = running || minipomo_can_start(v->pomo);
     enum cmd c = !enabled ? CMD_NONE : running ? CMD_PAUSE : CMD_START;
     CLAY(ui_click(c, 0), {
         .layout = {

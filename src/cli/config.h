@@ -50,7 +50,7 @@
 #define TEXT_ESTIMATE "Est pomodoros"
 #define TEXT_NOTE "Note"
 #define TEXT_DELETE "Delete this task? (y/N)"
-#define TEXT_RESET_STAT "Clear all pomodoro counts and time? (y/N)"
+#define TEXT_CLEAR "Clear all tasks? (y/N)"
 #define TEXT_NO_TTY "minipomo: needs a terminal\n"
 #define TEXT_HELP                                                            \
     "space start/pause  s skip  1-3 type  \xE2\x86\x91\xE2\x86\x93 select  " \

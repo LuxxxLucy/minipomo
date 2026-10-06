@@ -73,9 +73,10 @@ void minipomo_skip(struct minipomo *p, double now);
 void minipomo_set_type(struct minipomo *p, enum minipomo_type type, double now);
 void minipomo_mark_done(struct minipomo *p, int i, bool done, double now);
 bool minipomo_update(struct minipomo *p, double now);
-void minipomo_reset_stat(struct minipomo *p);
 
 bool minipomo_running(const struct minipomo *p);
+bool minipomo_can_start(const struct minipomo *p);
+bool minipomo_can_play(const struct minipomo_task *t);
 enum minipomo_type minipomo_current_type(const struct minipomo *p);
 int minipomo_seconds_left(const struct minipomo *p, double now);
 double minipomo_fraction_left(const struct minipomo *p, double now);

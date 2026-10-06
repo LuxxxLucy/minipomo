@@ -21,7 +21,7 @@ static void list_head(const struct view *v)
                   ui_text(FONT_ROUNDED, SIZE_LIST, (Clay_Color)COL_WHITE));
         ui_grow();
         if (v->pomo->task_count) {
-            ui_link(TEXT_CLEAR, CMD_RESET_STAT, 0, (Clay_Color)COL_DIM,
+            ui_link(TEXT_CLEAR, CMD_CLEAR, 0, (Clay_Color)COL_DIM,
                     (Clay_Color)COL_WHITE);
         }
     }
@@ -121,8 +121,12 @@ static void task_row(const struct view *v, int i)
                 CLAY_TEXT(
                     ui_str(count_texts[i]),
                     ui_text(FONT_ROUNDED, SIZE_COUNT, (Clay_Color)COL_MUTED));
-                icon(t->running ? ICON_PAUSE : ICON_PLAY,
-                     t->running ? CMD_PAUSE : CMD_PLAY, i, false);
+                if (minipomo_can_play(t)) {
+                    icon(t->running ? ICON_PAUSE : ICON_PLAY, CMD_PLAY, i,
+                         false);
+                } else {
+                    ui_gap(ICON_SIZE, ICON_SIZE);
+                }
                 icon(ICON_MORE, CMD_EDIT, i, true);
             }
             if (t->note[0]) {

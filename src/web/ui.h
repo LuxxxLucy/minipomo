@@ -23,7 +23,7 @@ enum cmd {
     CMD_SAVE,
     CMD_CANCEL,
     CMD_DELETE,
-    CMD_RESET_STAT,
+    CMD_CLEAR,
 };
 
 enum draw_flag { FLAG_STRIKE = 1, FLAG_DASHED = 2 };

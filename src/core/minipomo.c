@@ -45,13 +45,15 @@ static void set_type(struct minipomo_task *t, enum minipomo_type type,
     t->remaining = DURATION_SEC[type];
 }
 
-static void finish(struct minipomo_task *t, double now)
+static void finish(struct minipomo_task *t, bool counted, double now)
 {
     enum minipomo_type next = MINIPOMO_FOCUS;
     if (t->type == MINIPOMO_FOCUS) {
-        t->pomodoros++;
-        next = t->pomodoros % MINIPOMO_LONG_BREAK_EVERY ? MINIPOMO_SHORT_BREAK
-                                                        : MINIPOMO_LONG_BREAK;
+        t->pomodoros += counted;
+        t->done |= counted && t->pomodoros >= t->estimate;
+        bool long_break =
+            t->pomodoros && t->pomodoros % MINIPOMO_LONG_BREAK_EVERY == 0;
+        next = long_break ? MINIPOMO_LONG_BREAK : MINIPOMO_SHORT_BREAK;
     }
     set_type(t, next, now);
 }
@@ -139,17 +141,19 @@ void minipomo_move(struct minipomo *p, int from, int to)
 
 void minipomo_play(struct minipomo *p, int i, double now)
 {
+    if (!minipomo_can_play(&p->tasks[i])) {
+        return;
+    }
     if (current(p)) {
         pause(current(p), now);
     }
     p->current = i;
-    p->tasks[i].done = false;
     start(&p->tasks[i], now);
 }
 
 void minipomo_start(struct minipomo *p, double now)
 {
-    int i = p->current == MINIPOMO_NONE ? first_unfinished(p) : p->current;
+    int i = current(p) ? p->current : first_unfinished(p);
     if (i != MINIPOMO_NONE) {
         minipomo_play(p, i, now);
     }
@@ -164,14 +168,8 @@ void minipomo_pause(struct minipomo *p, double now)
 
 void minipomo_skip(struct minipomo *p, double now)
 {
-    struct minipomo_task *t = current(p);
-    if (!t) {
-        return;
-    }
-    bool was_running = t->running;
-    finish(t, now);
-    if (was_running) {
-        start(t, now);
+    if (current(p)) {
+        finish(current(p), false, now);
     }
 }
 
@@ -185,9 +183,8 @@ void minipomo_set_type(struct minipomo *p, enum minipomo_type type, double now)
 void minipomo_mark_done(struct minipomo *p, int i, bool done, double now)
 {
     p->tasks[i].done = done;
-    if (done && i == p->current) {
+    if (!minipomo_can_play(&p->tasks[i])) {
         pause(&p->tasks[i], now);
-        p->current = first_unfinished(p);
     }
 }
 
@@ -197,21 +194,26 @@ bool minipomo_update(struct minipomo *p, double now)
     if (!t || !t->running || now < t->deadline) {
         return false;
     }
-    minipomo_skip(p, now);
+    finish(t, true, now);
     return true;
-}
-
-void minipomo_reset_stat(struct minipomo *p)
-{
-    for (int i = 0; i < p->task_count; i++) {
-        p->tasks[i].pomodoros = 0;
-        p->tasks[i].focus_sec = 0;
-    }
 }
 
 bool minipomo_running(const struct minipomo *p)
 {
     return p->current != MINIPOMO_NONE && p->tasks[p->current].running;
+}
+
+bool minipomo_can_play(const struct minipomo_task *t)
+{
+    return !t->done || t->type != MINIPOMO_FOCUS;
+}
+
+bool minipomo_can_start(const struct minipomo *p)
+{
+    if (p->current == MINIPOMO_NONE) {
+        return first_unfinished(p) != MINIPOMO_NONE;
+    }
+    return minipomo_can_play(&p->tasks[p->current]);
 }
 
 enum minipomo_type minipomo_current_type(const struct minipomo *p)

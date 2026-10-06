@@ -12,13 +12,15 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - run: make web
+      # the runner ships LLVM 18 with wasm-ld, but off PATH
+      - run: PATH=/usr/lib/llvm-18/bin:$PATH make web
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web

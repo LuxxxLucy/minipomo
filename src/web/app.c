@@ -119,13 +119,18 @@ static void apply(enum cmd c, int arg, double now)
             minipomo_set_type(&pomo, arg, now);
             break;
         case CMD_PLAY:
-            minipomo_play(&pomo, arg, now);
+            if (pomo.tasks[arg].running) {
+                minipomo_pause(&pomo, now);
+            } else {
+                minipomo_play(&pomo, arg, now);
+            }
             break;
         case CMD_MARK_DONE:
             minipomo_mark_done(&pomo, arg, !pomo.tasks[arg].done, now);
             break;
-        case CMD_RESET_STAT:
-            minipomo_reset_stat(&pomo);
+        case CMD_CLEAR:
+            minipomo_init(&pomo);
+            form.open = false;
             break;
         case CMD_EDIT:
             open_form(arg);
