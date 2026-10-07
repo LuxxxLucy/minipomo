@@ -91,11 +91,10 @@
 #define ARENA_BYTES (4 << 20)
 #define MAX_ELEMENTS 1024
 #define MAX_DRAWS 1024
-// the page grows past the window; main.js sizes the canvas to it
 #define LAYOUT_H 100000
 #define TITLE_LEN (MINIPOMO_TITLE_MAX + 16)
 #define CLOCK_LEN 8
-#define COUNT_LEN 16
+#define COUNT_LEN 32
 #define STAT_LEN 32
 
 #define ID_CLICK "click"

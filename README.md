@@ -11,22 +11,34 @@ Inspired by the look of [pomofocus.io](https://pomofocus.io)
 ## Quick start
 
 ```
-make serve      # build, then serve at http://localhost:8000
-build/minipomo  # terminal app
+make serve
+build/minipomo
 ```
 
 ## Build
 
 ```
-make core       # build/libminipomo.a
-make cli        # build/minipomo
-make web        # build/web/ (the core is compiled again for wasm32)
-make            # all three
-make install    # copy build/minipomo to $PREFIX/bin (PREFIX=/usr/local)
-make serve      # serve build/web/ (PORT=8000)
-make setup      # install clang with the wasm32 target and wasm-ld if missing
+make core
+make cli
+make web
+make
+make install
+make serve
+make setup
 make clean
 ```
+
+## Core interface
+
+One `struct minipomo` holds the task list and each task's timer.
+`minipomo_update` applies elapsed time in milliseconds.
+`minipomo_modify` updates time before applying a typed change.
+Both functions return completion information for application notifications.
+
+Applications read stored fields through const state references.
+Three `minipomo_get_*` functions provide timer values, start permission, and totals.
+Applications handle input, display, notifications, and storage writes.
+The save functions encode and validate complete state without file access.
 
 ## Credits
 

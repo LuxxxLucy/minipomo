@@ -1,281 +1,284 @@
 #include "core/minipomo.h"
+#include "core/text.h"
 
-const char *const MINIPOMO_TYPE_NAME[MINIPOMO_TYPE_COUNT] = {
-    "Pomodoro",
-    "Short Break",
-    "Long Break",
+#include <limits.h>
+
+static const int64_t PHASE_DURATION_MS[MINIPOMO_PHASE_COUNT] = {
+    MINIPOMO_FOCUS_MS,
+    MINIPOMO_SHORT_BREAK_MS,
+    MINIPOMO_LONG_BREAK_MS,
 };
 
-static const int DURATION_SEC[MINIPOMO_TYPE_COUNT] = {
-    MINIPOMO_FOCUS_SEC,
-    MINIPOMO_SHORT_BREAK_SEC,
-    MINIPOMO_LONG_BREAK_SEC,
-};
-
-static double seconds_left(const struct minipomo_task *t, double now)
+static bool has_task(const struct minipomo *state, int index)
 {
-    double left = t->running ? t->deadline - now : t->remaining;
-    double full = DURATION_SEC[t->type];
-    return left < 0 ? 0 : left > full ? full : left;
+    return index >= 0 && index < state->task_count;
 }
 
-static void start(struct minipomo_task *t, double now)
+static int start_task_index(const struct minipomo *state)
 {
-    if (!t->running) {
-        t->deadline = now + t->remaining;
-        t->running = true;
+    if (has_task(state, state->current)) {
+        return state->current;
     }
-}
-
-static void pause(struct minipomo_task *t, double now)
-{
-    if (!t->running) {
-        return;
-    }
-    t->focus_sec = minipomo_focus_sec(t, now);
-    t->remaining = seconds_left(t, now);
-    t->running = false;
-}
-
-static void set_type(struct minipomo_task *t, enum minipomo_type type,
-                     double now)
-{
-    pause(t, now);
-    t->type = type;
-    t->remaining = DURATION_SEC[type];
-}
-
-static void finish(struct minipomo_task *t, bool counted, double now)
-{
-    enum minipomo_type next = MINIPOMO_FOCUS;
-    if (t->type == MINIPOMO_FOCUS) {
-        t->pomodoros += counted;
-        t->done |= counted && t->pomodoros >= t->estimate;
-        bool long_break =
-            t->pomodoros && t->pomodoros % MINIPOMO_LONG_BREAK_EVERY == 0;
-        next = long_break ? MINIPOMO_LONG_BREAK : MINIPOMO_SHORT_BREAK;
-    }
-    set_type(t, next, now);
-}
-
-static struct minipomo_task *current(struct minipomo *p)
-{
-    return p->current == MINIPOMO_NONE ? 0 : &p->tasks[p->current];
-}
-
-static int first_unfinished(const struct minipomo *p)
-{
-    for (int i = 0; i < p->task_count; i++) {
-        if (!p->tasks[i].done) {
-            return i;
+    for (int index = 0; index < state->task_count; index++) {
+        if (!state->tasks[index].done) {
+            return index;
         }
     }
     return MINIPOMO_NONE;
 }
 
-static void set_details(struct minipomo_task *t, const char *title,
-                        const char *note, int estimate)
+static void set_phase(struct minipomo_task *task, enum minipomo_phase phase)
 {
-    minipomo_text_copy(t->title, MINIPOMO_TITLE_MAX, title,
-                       minipomo_text_len(title));
-    minipomo_text_copy(t->note, MINIPOMO_NOTE_MAX, note,
-                       minipomo_text_len(note));
-    t->estimate = estimate < 1                       ? 1
-                  : estimate > MINIPOMO_ESTIMATE_MAX ? MINIPOMO_ESTIMATE_MAX
-                                                     : estimate;
+    task->timer = (struct minipomo_timer){
+        .phase = phase,
+        .remaining_ms = PHASE_DURATION_MS[phase],
+    };
 }
 
-void minipomo_init(struct minipomo *p)
+static void finish_phase(struct minipomo_task *task, bool completed)
 {
-    p->task_count = 0;
-    p->current = MINIPOMO_NONE;
-}
-
-int minipomo_add(struct minipomo *p, const char *title, const char *note,
-                 int estimate)
-{
-    if (p->task_count == MINIPOMO_TASKS_MAX) {
-        return MINIPOMO_NONE;
+    enum minipomo_phase next = MINIPOMO_FOCUS;
+    if (task->timer.phase == MINIPOMO_FOCUS) {
+        if (completed) {
+            task->pomodoros += task->pomodoros < INT_MAX;
+            task->done |= task->pomodoros >= task->estimate;
+        }
+        next =
+            task->pomodoros && task->pomodoros % MINIPOMO_LONG_BREAK_EVERY == 0
+                ? MINIPOMO_LONG_BREAK
+                : MINIPOMO_SHORT_BREAK;
     }
-    struct minipomo_task *t = &p->tasks[p->task_count];
-    *t = (struct minipomo_task){ .remaining = MINIPOMO_FOCUS_SEC };
-    set_details(t, title, note, estimate);
-    return p->task_count++;
+    set_phase(task, next);
 }
 
-void minipomo_edit(struct minipomo *p, int i, const char *title,
-                   const char *note, int estimate)
+static bool valid_details(struct minipomo_details details)
 {
-    set_details(&p->tasks[i], title, note, estimate);
+    return details.title && details.title[0] && details.note &&
+           details.estimate >= 1 && details.estimate <= MINIPOMO_ESTIMATE_MAX;
 }
 
-void minipomo_remove(struct minipomo *p, int i)
+static void set_details(struct minipomo_task *task,
+                        struct minipomo_details details)
 {
-    for (int k = i; k < p->task_count - 1; k++) {
-        p->tasks[k] = p->tasks[k + 1];
-    }
-    p->task_count--;
-    if (p->current == i) {
-        p->current = MINIPOMO_NONE;
-    } else if (p->current > i) {
-        p->current--;
-    }
+    minipomo_text_copy(task->title, sizeof task->title, details.title,
+                       minipomo_text_len(details.title));
+    minipomo_text_copy(task->note, sizeof task->note, details.note,
+                       minipomo_text_len(details.note));
+    task->estimate = details.estimate;
 }
 
-void minipomo_move(struct minipomo *p, int from, int to)
+static void start_task(struct minipomo *state, int index)
 {
-    struct minipomo_task t = p->tasks[from];
-    int step = to > from ? 1 : -1;
-    for (int k = from; k != to; k += step) {
-        p->tasks[k] = p->tasks[k + step];
-    }
-    p->tasks[to] = t;
-    if (p->current == from) {
-        p->current = to;
-    } else if (from < p->current && p->current <= to) {
-        p->current--;
-    } else if (to <= p->current && p->current < from) {
-        p->current++;
-    }
-}
-
-void minipomo_play(struct minipomo *p, int i, double now)
-{
-    if (!minipomo_can_play(&p->tasks[i])) {
+    if (!minipomo_get_can_start_task(state, index)) {
         return;
     }
-    if (current(p)) {
-        pause(current(p), now);
+    if (has_task(state, state->current)) {
+        state->tasks[state->current].timer.running = false;
     }
-    p->current = i;
-    start(&p->tasks[i], now);
+    state->current = index;
+    state->tasks[index].timer.running = true;
 }
 
-void minipomo_start(struct minipomo *p, double now)
+static void move_task(struct minipomo *state, int from, int to)
 {
-    int i = current(p) ? p->current : first_unfinished(p);
-    if (i != MINIPOMO_NONE) {
-        minipomo_play(p, i, now);
+    struct minipomo_task task = state->tasks[from];
+    int step = to > from ? 1 : -1;
+    for (int index = from; index != to; index += step) {
+        state->tasks[index] = state->tasks[index + step];
     }
-}
-
-void minipomo_pause(struct minipomo *p, double now)
-{
-    if (current(p)) {
-        pause(current(p), now);
-    }
-}
-
-void minipomo_skip(struct minipomo *p, double now)
-{
-    if (current(p)) {
-        finish(current(p), false, now);
+    state->tasks[to] = task;
+    if (state->current == from) {
+        state->current = to;
+    } else if (from < state->current && state->current <= to) {
+        state->current--;
+    } else if (to <= state->current && state->current < from) {
+        state->current++;
     }
 }
 
-void minipomo_set_type(struct minipomo *p, enum minipomo_type type, double now)
+void minipomo_init(struct minipomo *state)
 {
-    if (current(p)) {
-        set_type(current(p), type, now);
+    *state = (struct minipomo){ .current = MINIPOMO_NONE };
+}
+
+struct minipomo_result minipomo_update(struct minipomo *state, int64_t now_ms)
+{
+    struct minipomo_result result = {
+        .added_task = MINIPOMO_NONE,
+        .completed.phase = MINIPOMO_NO_COMPLETION,
+    };
+    if (now_ms < 0 || now_ms > MINIPOMO_TIME_MAX) {
+        result.status = -1;
+        return result;
     }
-}
-
-void minipomo_mark_done(struct minipomo *p, int i, bool done, double now)
-{
-    p->tasks[i].done = done;
-    if (!minipomo_can_play(&p->tasks[i])) {
-        pause(&p->tasks[i], now);
+    int64_t elapsed_ms =
+        now_ms > state->updated_at_ms ? now_ms - state->updated_at_ms : 0;
+    state->updated_at_ms += elapsed_ms;
+    if (!has_task(state, state->current)) {
+        return result;
     }
-}
-
-bool minipomo_update(struct minipomo *p, double now)
-{
-    struct minipomo_task *t = current(p);
-    if (!t || !t->running || now < t->deadline) {
-        return false;
+    struct minipomo_task *task = &state->tasks[state->current];
+    if (!task->timer.running) {
+        return result;
     }
-    finish(t, true, now);
-    return true;
-}
-
-bool minipomo_running(const struct minipomo *p)
-{
-    return p->current != MINIPOMO_NONE && p->tasks[p->current].running;
-}
-
-bool minipomo_can_play(const struct minipomo_task *t)
-{
-    return !t->done || t->type != MINIPOMO_FOCUS;
-}
-
-bool minipomo_can_start(const struct minipomo *p)
-{
-    if (p->current == MINIPOMO_NONE) {
-        return first_unfinished(p) != MINIPOMO_NONE;
+    if (elapsed_ms > task->timer.remaining_ms) {
+        elapsed_ms = task->timer.remaining_ms;
     }
-    return minipomo_can_play(&p->tasks[p->current]);
+    task->timer.remaining_ms -= elapsed_ms;
+    if (task->timer.phase == MINIPOMO_FOCUS) {
+        int64_t capacity_ms = MINIPOMO_TIME_MAX - task->focus_ms;
+        task->focus_ms += elapsed_ms < capacity_ms ? elapsed_ms : capacity_ms;
+    }
+    if (task->timer.remaining_ms == 0) {
+        result.completed.phase = task->timer.phase;
+        minipomo_text_copy(result.completed.title,
+                           sizeof result.completed.title, task->title,
+                           minipomo_text_len(task->title));
+        finish_phase(task, true);
+    }
+    return result;
 }
 
-enum minipomo_type minipomo_current_type(const struct minipomo *p)
+struct minipomo_result minipomo_modify(struct minipomo *state,
+                                       struct minipomo_change change,
+                                       int64_t now_ms)
 {
-    return p->current == MINIPOMO_NONE ? MINIPOMO_FOCUS
-                                       : p->tasks[p->current].type;
-}
-
-int minipomo_seconds_left(const struct minipomo *p, double now)
-{
-    if (p->current == MINIPOMO_NONE) {
-        return MINIPOMO_FOCUS_SEC;
+    struct minipomo_result result = minipomo_update(state, now_ms);
+    if (result.status < 0) {
+        return result;
     }
-    double left = seconds_left(&p->tasks[p->current], now);
-    int whole = (int)left;
-    return whole < left ? whole + 1 : whole;
-}
-
-double minipomo_fraction_left(const struct minipomo *p, double now)
-{
-    if (p->current == MINIPOMO_NONE) {
-        return 1;
-    }
-    const struct minipomo_task *t = &p->tasks[p->current];
-    return seconds_left(t, now) / DURATION_SEC[t->type];
-}
-
-const char *minipomo_message(const struct minipomo *p)
-{
-    if (p->task_count == 0) {
-        return MINIPOMO_TEXT_EMPTY;
-    }
-    if (p->current == MINIPOMO_NONE) {
-        return "";
-    }
-    const struct minipomo_task *t = &p->tasks[p->current];
-    if (t->type != MINIPOMO_FOCUS) {
-        return MINIPOMO_TEXT_BREAK;
-    }
-    return t->title[0] ? t->title : MINIPOMO_TEXT_FOCUS;
-}
-
-double minipomo_focus_sec(const struct minipomo_task *t, double now)
-{
-    if (!t->running || t->type != MINIPOMO_FOCUS) {
-        return t->focus_sec;
-    }
-    return t->focus_sec + t->remaining - seconds_left(t, now);
-}
-
-struct minipomo_stat minipomo_stat(const struct minipomo *p, double now)
-{
-    struct minipomo_stat s = { 0 };
-    for (int i = 0; i < p->task_count; i++) {
-        const struct minipomo_task *t = &p->tasks[i];
-        s.pomodoros += t->pomodoros;
-        s.estimate += t->estimate;
-        s.focus_sec += minipomo_focus_sec(t, now);
-        if (!t->done && t->estimate > t->pomodoros) {
-            s.planned_sec += (t->estimate - t->pomodoros) *
-                             (MINIPOMO_FOCUS_SEC + MINIPOMO_SHORT_BREAK_SEC);
+    switch (change.type) {
+        case MINIPOMO_ADD: {
+            if (state->task_count == MINIPOMO_TASKS_MAX ||
+                !valid_details(change.add)) {
+                break;
+            }
+            int index = state->task_count++;
+            state->tasks[index] = (struct minipomo_task){ 0 };
+            set_details(&state->tasks[index], change.add);
+            set_phase(&state->tasks[index], MINIPOMO_FOCUS);
+            result.added_task = index;
+            return result;
+        }
+        case MINIPOMO_EDIT:
+            if (!has_task(state, change.edit.task) ||
+                !valid_details(change.edit.details)) {
+                break;
+            }
+            set_details(&state->tasks[change.edit.task], change.edit.details);
+            return result;
+        case MINIPOMO_REMOVE:
+            if (!has_task(state, change.remove)) {
+                break;
+            }
+            for (int index = change.remove; index < state->task_count - 1;
+                 index++) {
+                state->tasks[index] = state->tasks[index + 1];
+            }
+            state->tasks[--state->task_count] = (struct minipomo_task){ 0 };
+            if (state->current == change.remove) {
+                state->current = MINIPOMO_NONE;
+            } else if (state->current > change.remove) {
+                state->current--;
+            }
+            return result;
+        case MINIPOMO_MOVE:
+            if (!has_task(state, change.move.from) ||
+                !has_task(state, change.move.to)) {
+                break;
+            }
+            move_task(state, change.move.from, change.move.to);
+            return result;
+        case MINIPOMO_START_CURRENT:
+            start_task(state, start_task_index(state));
+            return result;
+        case MINIPOMO_START_TASK:
+            if (!has_task(state, change.start_task)) {
+                break;
+            }
+            start_task(state, change.start_task);
+            return result;
+        case MINIPOMO_PAUSE:
+            if (has_task(state, state->current)) {
+                state->tasks[state->current].timer.running = false;
+            }
+            return result;
+        case MINIPOMO_SKIP:
+            if (has_task(state, state->current) &&
+                state->tasks[state->current].timer.running) {
+                finish_phase(&state->tasks[state->current], false);
+            }
+            return result;
+        case MINIPOMO_SET_PHASE: {
+            if (change.phase < MINIPOMO_FOCUS ||
+                change.phase >= MINIPOMO_PHASE_COUNT) {
+                break;
+            }
+            int index = start_task_index(state);
+            if (has_task(state, index)) {
+                state->current = index;
+                set_phase(&state->tasks[index], change.phase);
+            }
+            return result;
+        }
+        case MINIPOMO_SET_DONE:
+            if (!has_task(state, change.set_done.task)) {
+                break;
+            }
+            state->tasks[change.set_done.task].done = change.set_done.done;
+            if (!minipomo_get_can_start_task(state, change.set_done.task)) {
+                state->tasks[change.set_done.task].timer.running = false;
+            }
+            return result;
+        case MINIPOMO_CLEAR: {
+            int64_t updated_at_ms = state->updated_at_ms;
+            minipomo_init(state);
+            state->updated_at_ms = updated_at_ms;
+            return result;
         }
     }
-    return s;
+    result.status = -1;
+    return result;
+}
+
+bool minipomo_get_can_start_task(const struct minipomo *state, int index)
+{
+    return has_task(state, index) &&
+           (!state->tasks[index].done ||
+            state->tasks[index].timer.phase != MINIPOMO_FOCUS);
+}
+
+struct minipomo_timer_view minipomo_get_timer(const struct minipomo *state)
+{
+    int index = start_task_index(state);
+    struct minipomo_timer_view view = {
+        .phase = MINIPOMO_FOCUS,
+        .remaining_ms = MINIPOMO_FOCUS_MS,
+        .duration_ms = MINIPOMO_FOCUS_MS,
+    };
+    if (has_task(state, index)) {
+        const struct minipomo_timer *timer = &state->tasks[index].timer;
+        view.phase = timer->phase;
+        view.remaining_ms = timer->remaining_ms;
+        view.duration_ms = PHASE_DURATION_MS[timer->phase];
+        view.running = timer->running;
+        view.can_start = minipomo_get_can_start_task(state, index);
+    }
+    return view;
+}
+
+struct minipomo_stats minipomo_get_stats(const struct minipomo *state)
+{
+    struct minipomo_stats stats = { 0 };
+    for (int index = 0; index < state->task_count; index++) {
+        const struct minipomo_task *task = &state->tasks[index];
+        stats.pomodoros += task->pomodoros;
+        stats.estimate += task->estimate;
+        stats.focus_ms += task->focus_ms;
+        if (!task->done && task->estimate > task->pomodoros) {
+            stats.planned_ms += (int64_t)(task->estimate - task->pomodoros) *
+                                (MINIPOMO_FOCUS_MS + MINIPOMO_SHORT_BREAK_MS);
+        }
+    }
+    return stats;
 }

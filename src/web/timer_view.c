@@ -2,7 +2,7 @@
 
 static char mmss[CLOCK_LEN];
 
-static void type_tab(const struct view *v, enum minipomo_type type)
+static void type_tab(const struct view *v, enum minipomo_phase type)
 {
     Clay_Color white = COL_WHITE;
     Clay_Color dim = COL_DIM;
@@ -14,16 +14,16 @@ static void type_tab(const struct view *v, enum minipomo_type type)
         },
     })
     {
-        bool lit = Clay_Hovered() || type == minipomo_current_type(v->pomo);
-        CLAY_TEXT(ui_str(MINIPOMO_TYPE_NAME[type]),
+        bool lit = Clay_Hovered() || type == minipomo_get_timer(v->pomo).phase;
+        CLAY_TEXT(ui_str(APP_PHASE_NAMES[type]),
                   ui_text(FONT_PLAIN, SIZE_TAB, lit ? white : dim));
     }
 }
 
 static void start_button(const struct view *v)
 {
-    bool running = minipomo_running(v->pomo);
-    bool enabled = running || minipomo_can_start(v->pomo);
+    bool running = minipomo_get_timer(v->pomo).running;
+    bool enabled = running || minipomo_get_timer(v->pomo).can_start;
     enum cmd c = !enabled ? CMD_NONE : running ? CMD_PAUSE : CMD_START;
     CLAY(ui_click(c, 0), {
         .layout = {
@@ -84,7 +84,7 @@ static void skip_button(void)
 void timer_view(const struct view *v)
 {
     Clay_Color white = COL_WHITE;
-    minipomo_format_mmss(mmss, minipomo_seconds_left(v->pomo, v->now));
+    minipomo_format_mmss(mmss, app_seconds_left(v->pomo));
 
     CLAY_AUTO_ID({
         .layout = {
@@ -103,7 +103,7 @@ void timer_view(const struct view *v)
         {
             ui_gap(SKIP_W, 0);
             start_button(v);
-            if (minipomo_running(v->pomo)) {
+            if (minipomo_get_timer(v->pomo).running) {
                 skip_button();
             } else {
                 ui_gap(SKIP_W, 0);
@@ -111,12 +111,12 @@ void timer_view(const struct view *v)
         }
         CLAY_AUTO_ID({ .layout.childGap = TAB_GAP })
         {
-            for (int type = 0; type < MINIPOMO_TYPE_COUNT; type++) {
+            for (int type = 0; type < MINIPOMO_PHASE_COUNT; type++) {
                 type_tab(v, type);
             }
         }
     }
     ui_gap(0, MESSAGE_GAP);
-    CLAY_TEXT(ui_str(minipomo_message(v->pomo)),
+    CLAY_TEXT(ui_str(app_message(v->pomo)),
               ui_text(FONT_PLAIN, SIZE_MESSAGE, white));
 }

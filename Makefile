@@ -1,19 +1,10 @@
-# One C core, two frontends.
-#   make core     build/libminipomo.a, the native core library
-#   make cli      build/minipomo, the terminal app
-#   make web      build/web/, the site (core compiled again for wasm32)
-#   make          all three
-#   make install  copy the terminal app to $(PREFIX)/bin
-#   make serve    build the site, then serve it at http://localhost:8000
-#   make setup    install clang with the wasm32 target and wasm-ld if missing
-#   make clean
-
 CORE := minipomo save text
 CORE_SRC := $(CORE:%=src/core/%.c)
 CORE_OBJ := $(CORE:%=build/core/%.o)
 CORE_LIB := build/libminipomo.a
 CLI_SRC := $(wildcard src/cli/*.c)
 WEB_SRC := $(wildcard src/web/*.c)
+APP_SRC := $(wildcard src/app/*.c)
 SITE := build/web
 HEADERS := $(wildcard src/*/*.h)
 
@@ -44,12 +35,12 @@ build/core/%.o: src/core/%.c $(HEADERS)
 $(CORE_LIB): $(CORE_OBJ)
 	$(AR) rcs $@ $^
 
-build/minipomo: $(CLI_SRC) $(CORE_LIB) $(HEADERS)
-	$(CC) $(CFLAGS) -o $@ $(CLI_SRC) $(CORE_LIB)
+build/minipomo: $(CLI_SRC) $(APP_SRC) $(CORE_LIB) $(HEADERS)
+	$(CC) $(CFLAGS) -o $@ $(CLI_SRC) $(APP_SRC) $(CORE_LIB)
 
-$(SITE)/app.wasm: $(WEB_SRC) $(CORE_SRC) $(HEADERS) $(CLAY) | setup
+$(SITE)/app.wasm: $(WEB_SRC) $(APP_SRC) $(CORE_SRC) $(HEADERS) $(CLAY) | setup
 	@mkdir -p $(@D)
-	$(WASM_CC) $(CFLAGS) $(WASM_FLAGS) -o $@ $(WEB_SRC) $(CORE_SRC)
+	$(WASM_CC) $(CFLAGS) $(WASM_FLAGS) -o $@ $(WEB_SRC) $(APP_SRC) $(CORE_SRC)
 
 $(SITE)/%: src/web/%
 	@mkdir -p $(@D)

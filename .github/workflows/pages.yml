@@ -19,8 +19,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      # the runner ships LLVM 18 with wasm-ld, but off PATH
-      - run: PATH=/usr/lib/llvm-18/bin:$PATH make web
+      - run: PATH=/usr/lib/llvm-18/bin:$PATH make cli web
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web

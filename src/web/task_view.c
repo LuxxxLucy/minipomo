@@ -49,8 +49,7 @@ static void task_row(const struct view *v, int i)
 {
     const struct minipomo_task *t = &v->pomo->tasks[i];
     minipomo_format_ratio(count_texts[i], t->pomodoros, t->estimate);
-    minipomo_format_duration(focus_texts[i],
-                             (int)minipomo_focus_sec(t, v->now));
+    minipomo_format_duration(focus_texts[i], t->focus_ms / 1000);
 
     CLAY(CLAY_IDI(ID_ROW, i),
          {
@@ -88,7 +87,7 @@ static void task_row(const struct view *v, int i)
                 },
             })
             {
-                CLAY(ui_click(CMD_MARK_DONE, i), {
+                CLAY(ui_click(t->done ? CMD_MARK_UNDONE : CMD_MARK_DONE, i), {
                     .layout = {
                         .sizing = { CLAY_SIZING_FIXED(CHECK_SIZE),
                                     CLAY_SIZING_FIXED(CHECK_SIZE) },
@@ -121,8 +120,9 @@ static void task_row(const struct view *v, int i)
                 CLAY_TEXT(
                     ui_str(count_texts[i]),
                     ui_text(FONT_ROUNDED, SIZE_COUNT, (Clay_Color)COL_MUTED));
-                if (minipomo_can_play(t)) {
-                    icon(t->running ? ICON_PAUSE : ICON_PLAY, CMD_PLAY, i,
+                if (minipomo_get_can_start_task(v->pomo, i)) {
+                    icon(t->timer.running ? ICON_PAUSE : ICON_PLAY,
+                         t->timer.running ? CMD_PAUSE_TASK : CMD_START_TASK, i,
                          false);
                 } else {
                     ui_gap(ICON_SIZE, ICON_SIZE);
@@ -273,12 +273,12 @@ static void add_button(void)
 
 static void stat_view(const struct view *v)
 {
-    struct minipomo_stat s = minipomo_stat(v->pomo, v->now);
+    struct minipomo_stats s = minipomo_get_stats(v->pomo);
     minipomo_format_ratio(pomodoros_text, s.pomodoros, s.estimate);
-    minipomo_format_duration(focus_text, (int)s.focus_sec);
-    int tenths_of_hour = (s.planned_sec * 10 + HOUR_SEC / 2) / HOUR_SEC;
+    minipomo_format_duration(focus_text, s.focus_ms / 1000);
+    int tenths_of_hour = ((s.planned_ms / 1000) * 10 + HOUR_SEC / 2) / HOUR_SEC;
     char *p = minipomo_format_mmss(
-        finish_text, (v->minute_of_day + s.planned_sec / 60) % DAY_MIN);
+        finish_text, (v->minute_of_day + (s.planned_ms / 1000) / 60) % DAY_MIN);
     p = minipomo_format_int(minipomo_text_put(p, " ("), tenths_of_hour / 10);
     p = minipomo_format_int(minipomo_text_put(p, "."), tenths_of_hour % 10);
     minipomo_text_put(p, "h)");

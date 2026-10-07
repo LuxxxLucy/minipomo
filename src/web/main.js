@@ -2,7 +2,6 @@ const FONTS = [
   (size) => `bold ${size}px 'Arial Rounded MT Bold', ArialRounded, system-ui, sans-serif`,
   (size) => `${size}px system-ui, -apple-system, sans-serif`,
 ];
-// struct draw and struct field in src/web/app.c
 const DRAW_WORDS = 22;
 const FIELD_WORDS = 6;
 const DRAW_RECT = 1;
@@ -12,6 +11,7 @@ const FLAG_STRIKE = 1;
 const FLAG_DASHED = 2;
 const CURSORS = ["default", "pointer", "grabbing"];
 const STORE_KEY = "minipomo";
+const APP_KEYS = { Escape: 0, Enter: 1, " ": 2 };
 const DASH = [6, 4];
 const CHIME_HZ = [523, 659];
 const CHIME_GAP_SEC = 0.25;
@@ -28,8 +28,10 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const pointer = { x: -1, y: -1, down: 0, up: 0 };
 let app, memory, audio;
+let storageError = false;
+let storageWritable = false;
 
-const now = () => Date.now() / 1000;
+const now = () => Date.now();
 const text = (ptr, len) => decoder.decode(new Uint8Array(memory.buffer, ptr, len));
 const cstring = (ptr) => text(ptr, new Uint8Array(memory.buffer, ptr).indexOf(0));
 const rgba = (f, o) => `rgba(${f[o]},${f[o + 1]},${f[o + 2]},${f[o + 3] / 255})`;
@@ -100,7 +102,6 @@ function paint(n, w, h) {
     ctx.fillStyle = rgba(f, o + 4);
     const kind = i32[o + 17];
     if (kind === DRAW_RECT) {
-      // Clay corners are tl, tr, bl, br; canvas wants tl, tr, br, bl
       ctx.beginPath();
       ctx.roundRect(x, y, bw, bh, [f[o + 8], f[o + 9], f[o + 11], f[o + 10]]);
       ctx.fill();
@@ -162,8 +163,17 @@ function frame() {
 
   const title = cstring(app.app_title());
   if (document.title !== title) document.title = title;
-  const len = app.app_save();
-  if (len >= 0) localStorage.setItem(STORE_KEY, text(app.app_io(), len));
+  const len = storageWritable ? app.app_save() : -1;
+  if (len >= 0) {
+    try {
+      localStorage.setItem(STORE_KEY, text(app.app_io(), len));
+      app.app_saved();
+      storageError = false;
+    } catch (error) {
+      if (!storageError) console.error("Cannot save MiniPomo state", error);
+      storageError = true;
+    }
+  }
 }
 
 function loop() {
@@ -176,14 +186,18 @@ function move(e) {
   pointer.y = e.offsetY;
 }
 
-canvas.addEventListener("pointermove", move);
-canvas.addEventListener("pointerdown", (e) => {
-  move(e);
-  pointer.down = 1;
+function enableNotifications() {
   audio ??= new AudioContext();
   if (window.Notification && Notification.permission === "default") {
     Notification.requestPermission();
   }
+}
+
+canvas.addEventListener("pointermove", move);
+canvas.addEventListener("pointerdown", (e) => {
+  move(e);
+  pointer.down = 1;
+  enableNotifications();
 });
 addEventListener("pointerup", () => {
   pointer.up = 1;
@@ -193,21 +207,39 @@ canvas.addEventListener("pointerleave", () => {
 });
 inputs.forEach((el, k) => {
   el.addEventListener("input", () => app.app_input(k, writeIo(el.value)));
-  el.addEventListener("keydown", (e) => {
-    if (e.isComposing) return;
-    if (e.key === "Escape") app.app_key(0);
-    if (e.key === "Enter" && k === 0) app.app_key(1);
-  });
 });
-
-const hiddenTabTimer = new Worker(URL.createObjectURL(new Blob(
-  ["setInterval(() => postMessage(0), 1000);"], { type: "text/javascript" })));
-hiddenTabTimer.onmessage = () => document.hidden && frame();
+addEventListener("keydown", (e) => {
+  if (!app || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
+  const field = inputs.indexOf(e.target);
+  if (field >= 0) {
+    if (e.key !== "Escape" && !(e.key === "Enter" && field === 0)) return;
+  } else if (e.target !== document.body && e.target !== canvas) {
+    return;
+  }
+  if (!Object.hasOwn(APP_KEYS, e.key)) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  enableNotifications();
+  app.app_key(APP_KEYS[e.key], now());
+  frame();
+});
 
 const { instance } = await WebAssembly.instantiateStreaming(fetch("app.wasm"), { env });
 app = instance.exports;
 memory = app.memory;
 if (app.app_init() !== 0) throw new Error("app_init failed");
-const saved = localStorage.getItem(STORE_KEY);
-if (saved) app.app_load(writeIo(saved));
+try {
+  const saved = localStorage.getItem(STORE_KEY);
+  if (saved && (encoder.encode(saved).length > app.app_io_size() || app.app_load(writeIo(saved)) !== 0)) {
+    console.error("Cannot load MiniPomo state; saving is disabled");
+  } else {
+    storageWritable = true;
+  }
+} catch (error) {
+  console.error("Cannot read MiniPomo state; saving is disabled", error);
+}
 loop();
+
+const hiddenTabTimer = new Worker(URL.createObjectURL(new Blob(
+  ["setInterval(() => postMessage(0), 1000);"], { type: "text/javascript" })));
+hiddenTabTimer.onmessage = () => document.hidden && frame();

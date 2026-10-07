@@ -1,4 +1,4 @@
-#include "core/minipomo.h"
+#include "core/text.h"
 
 int minipomo_text_len(const char *s)
 {
@@ -36,14 +36,15 @@ char *minipomo_format_int(char *dst, long long n)
 {
     char digits[20];
     int k = 0;
+    unsigned long long magnitude =
+        n < 0 ? 0ULL - (unsigned long long)n : (unsigned long long)n;
     if (n < 0) {
         *dst++ = '-';
-        n = -n;
     }
     do {
-        digits[k++] = '0' + n % 10;
-        n /= 10;
-    } while (n);
+        digits[k++] = '0' + magnitude % 10;
+        magnitude /= 10;
+    } while (magnitude);
     while (k) {
         *dst++ = digits[--k];
     }
@@ -51,7 +52,7 @@ char *minipomo_format_int(char *dst, long long n)
     return dst;
 }
 
-char *minipomo_format_ratio(char *dst, int done, int total)
+char *minipomo_format_ratio(char *dst, long long done, long long total)
 {
     dst = minipomo_text_put(minipomo_format_int(dst, done), "/");
     return minipomo_format_int(dst, total);
@@ -72,9 +73,9 @@ char *minipomo_format_mmss(char *dst, int sec)
     return two_digits(dst, sec % 60);
 }
 
-char *minipomo_format_duration(char *dst, int sec)
+char *minipomo_format_duration(char *dst, long long sec)
 {
-    int min = sec / 60;
+    long long min = sec / 60;
     if (min >= 60) {
         dst = minipomo_text_put(minipomo_format_int(dst, min / 60), "h ");
         return minipomo_text_put(two_digits(dst, min % 60), "m");

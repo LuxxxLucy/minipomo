@@ -24,12 +24,11 @@
 #define TAB_KEY 2
 #define TAB_GAP 2
 #define MARK_W 2
-// edge and check 4, focus time 8, count 6, play 2, a free cell 1
 #define ROW_FIXED_W 21
 #define LAST_ROW 999
 
 #define CLOCK_LEN 8
-#define COUNT_LEN 16
+#define COUNT_LEN 32
 #define STAT_LEN 64
 #define ESTIMATE_LEN 8
 #define ANSWER_LEN 4

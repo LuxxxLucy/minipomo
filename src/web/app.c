@@ -1,5 +1,7 @@
 #define CLAY_IMPLEMENTATION
+#include "core/save.h"
 #include "web/ui.h"
+#include "core/save.h"
 
 #define EXPORT(name) __attribute__((export_name(name)))
 #define IMPORT(name) __attribute__((import_module("env"), import_name(name)))
@@ -14,8 +16,7 @@ void js_log(const char *s, int len);
 enum draw_kind { DRAW_RECT = 1, DRAW_TEXT, DRAW_BORDER };
 enum field_slot { FIELD_TITLE, FIELD_NOTE, FIELD_COUNT };
 enum cursor { CURSOR_ARROW, CURSOR_HAND, CURSOR_DRAG };
-
-// main.js reads these two structs; keep the field order
+enum key { KEY_ESCAPE, KEY_ENTER, KEY_SPACE };
 struct draw {
     Clay_BoundingBox box;
     Clay_Color color;
@@ -56,8 +57,9 @@ static bool unsaved;
 static enum cursor cursor;
 static int held_row = NO_ROW;
 static bool dragging;
+static struct hit pressed_hit;
 static float press_y;
-static double last_now;
+static double last_frame_ms;
 
 static Clay_Dimensions measure(Clay_StringSlice s, Clay_TextElementConfig *cfg,
                                void *user)
@@ -88,48 +90,80 @@ static void open_form(int i)
     }
 }
 
-static void save_form(void)
+static void completed(struct minipomo_result result)
 {
-    if (!form.title[0]) {
-        return;
+    if (result.completed.phase != MINIPOMO_NO_COMPLETION) {
+        unsaved = true;
+        js_notify(app_completion_message(&result.completed));
     }
-    if (form.index == MINIPOMO_NONE) {
-        minipomo_add(&pomo, form.title, form.note, form.estimate);
-    } else {
-        minipomo_edit(&pomo, form.index, form.title, form.note, form.estimate);
-    }
-    form.open = false;
 }
 
-static void apply(enum cmd c, int arg, double now)
+static struct minipomo_result modify(struct minipomo_change change,
+                                     int64_t now_ms)
+{
+    struct minipomo_result result = minipomo_modify(&pomo, change, now_ms);
+    unsaved |= result.status == 0;
+    completed(result);
+    return result;
+}
+
+static void save_form(int64_t now_ms)
+{
+    if (!form.open || !form.title[0]) {
+        return;
+    }
+    struct minipomo_details details = { form.title, form.note, form.estimate };
+    struct minipomo_change change = {
+        .type = form.index == MINIPOMO_NONE ? MINIPOMO_ADD : MINIPOMO_EDIT,
+    };
+    if (form.index == MINIPOMO_NONE) {
+        change.add = details;
+    } else {
+        change.edit.task = form.index;
+        change.edit.details = details;
+    }
+    struct minipomo_result result = modify(change, now_ms);
+    if (result.status == 0) {
+        form.open = false;
+    }
+}
+
+static void apply(enum cmd c, int arg, int64_t now_ms)
 {
     switch (c) {
         case CMD_NONE:
             return;
         case CMD_START:
-            minipomo_start(&pomo, now);
+            modify((struct minipomo_change){ .type = MINIPOMO_START_CURRENT },
+                   now_ms);
             break;
         case CMD_PAUSE:
-            minipomo_pause(&pomo, now);
+        case CMD_PAUSE_TASK:
+            modify((struct minipomo_change){ .type = MINIPOMO_PAUSE }, now_ms);
             break;
         case CMD_SKIP:
-            minipomo_skip(&pomo, now);
+            modify((struct minipomo_change){ .type = MINIPOMO_SKIP }, now_ms);
             break;
         case CMD_SET_TYPE:
-            minipomo_set_type(&pomo, arg, now);
+            modify((struct minipomo_change){ .type = MINIPOMO_SET_PHASE,
+                                             .phase = arg },
+                   now_ms);
             break;
-        case CMD_PLAY:
-            if (pomo.tasks[arg].running) {
-                minipomo_pause(&pomo, now);
-            } else {
-                minipomo_play(&pomo, arg, now);
-            }
+        case CMD_START_TASK:
+            modify((struct minipomo_change){ .type = MINIPOMO_START_TASK,
+                                             .start_task = arg },
+                   now_ms);
             break;
         case CMD_MARK_DONE:
-            minipomo_mark_done(&pomo, arg, !pomo.tasks[arg].done, now);
+        case CMD_MARK_UNDONE:
+            modify(
+                (struct minipomo_change){
+                    .type = MINIPOMO_SET_DONE,
+                    .set_done = { arg, c == CMD_MARK_DONE } },
+                now_ms);
             break;
         case CMD_CLEAR:
-            minipomo_init(&pomo);
+            modify((struct minipomo_change){ .type = MINIPOMO_CLEAR }, now_ms);
             form.open = false;
             break;
         case CMD_EDIT:
@@ -148,17 +182,18 @@ static void apply(enum cmd c, int arg, double now)
             form.note_open = true;
             break;
         case CMD_SAVE:
-            save_form();
+            save_form(now_ms);
             break;
         case CMD_CANCEL:
             form.open = false;
             break;
         case CMD_DELETE:
-            minipomo_remove(&pomo, form.index);
+            modify((struct minipomo_change){ .type = MINIPOMO_REMOVE,
+                                             .remove = form.index },
+                   now_ms);
             form.open = false;
             break;
     }
-    unsaved = true;
 }
 
 static struct hit hit_test(void)
@@ -188,7 +223,7 @@ static float row_middle(int i)
     return b.y + b.height / 2;
 }
 
-static void drag_row(float y, bool down)
+static void drag_row(float y, bool down, int64_t now_ms)
 {
     if (held_row == NO_ROW) {
         return;
@@ -211,9 +246,10 @@ static void drag_row(float y, bool down)
         to = held_row + 1;
     }
     if (to != held_row) {
-        minipomo_move(&pomo, held_row, to);
+        modify((struct minipomo_change){ .type = MINIPOMO_MOVE,
+                                         .move = { held_row, to } },
+               now_ms);
         held_row = to;
-        unsaved = true;
     }
 }
 
@@ -259,11 +295,10 @@ static int emit(Clay_RenderCommandArray cmds)
     return n;
 }
 
-static void set_page_title(double now)
+static void set_page_title(void)
 {
-    const char *message = minipomo_message(&pomo);
-    char *p =
-        minipomo_format_mmss(page_title, minipomo_seconds_left(&pomo, now));
+    const char *message = app_message(&pomo);
+    char *p = minipomo_format_mmss(page_title, app_seconds_left(&pomo));
     if (message[0]) {
         p = minipomo_text_put(p, " - ");
         minipomo_text_copy(p, TITLE_LEN - (int)(p - page_title), message,
@@ -287,27 +322,28 @@ int app_init(void)
 }
 
 EXPORT("app_frame")
-int app_frame(float width, float height, double now, int utc_offset_min,
+int app_frame(float width, float height, double now_ms, int utc_offset_min,
               float pointer_x, float pointer_y, bool pointer_down)
 {
-    if (minipomo_update(&pomo, now)) {
-        js_notify(minipomo_message(&pomo));
-        unsaved = true;
-    }
+    completed(minipomo_update(&pomo, (int64_t)now_ms));
 
     Clay_SetLayoutDimensions((Clay_Dimensions){ width, LAYOUT_H });
     Clay_SetPointerState((Clay_Vector2){ pointer_x, pointer_y }, pointer_down);
     Clay_PointerDataInteractionState press = Clay_GetPointerState().state;
     struct hit hit = hit_test();
     bool on_row = hit.row != NO_ROW && !form.open;
-    if (press == CLAY_POINTER_DATA_RELEASED_THIS_FRAME && !dragging) {
-        apply(hit.cmd, hit.arg, now);
+    if (press == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
+        pressed_hit = hit;
+    }
+    if (press == CLAY_POINTER_DATA_RELEASED_THIS_FRAME && !dragging &&
+        hit.cmd == pressed_hit.cmd && hit.arg == pressed_hit.arg) {
+        apply(pressed_hit.cmd, pressed_hit.arg, now_ms);
     }
     if (press == CLAY_POINTER_DATA_PRESSED_THIS_FRAME && !hit.cmd && on_row) {
         held_row = hit.row;
         press_y = pointer_y;
     }
-    drag_row(pointer_y, pointer_down);
+    drag_row(pointer_y, pointer_down, now_ms);
     cursor = dragging            ? CURSOR_DRAG
              : hit.cmd || on_row ? CURSOR_HAND
                                  : CURSOR_ARROW;
@@ -315,22 +351,21 @@ int app_frame(float width, float height, double now, int utc_offset_min,
     struct view v = {
         .pomo = &pomo,
         .form = &form,
-        .now = now,
         .window_height = height,
         .minute_of_day =
-            (int)(((long long)(now / 60) - utc_offset_min) % DAY_MIN),
+            (int)(((long long)(now_ms / 60000) - utc_offset_min) % DAY_MIN),
         .pointer_down = pointer_down,
         .dragged_row = dragging ? held_row : NO_ROW,
     };
     Clay_BeginLayout();
     page(&v);
-    float dt = last_now ? (float)(now - last_now) : 0;
-    last_now = now;
+    float dt = last_frame_ms ? (float)((now_ms - last_frame_ms) / 1000) : 0;
+    last_frame_ms = now_ms;
     Clay_RenderCommandArray cmds = Clay_EndLayout(dt);
 
     place_field(FIELD_TITLE, CLAY_ID(ID_FIELD_TITLE));
     place_field(FIELD_NOTE, CLAY_ID(ID_FIELD_NOTE));
-    set_page_title(now);
+    set_page_title();
     return emit(cmds);
 }
 
@@ -385,9 +420,24 @@ void app_input(int field, int len)
 }
 
 EXPORT("app_key")
-void app_key(bool enter)
+void app_key(enum key key, double now_ms)
 {
-    apply(enter ? CMD_SAVE : CMD_CANCEL, 0, last_now);
+    switch (key) {
+        case KEY_ESCAPE:
+            apply(CMD_CANCEL, 0, now_ms);
+            break;
+        case KEY_ENTER:
+            if (form.open) {
+                save_form(now_ms);
+            } else if (pomo.task_count < MINIPOMO_TASKS_MAX) {
+                open_form(MINIPOMO_NONE);
+            }
+            break;
+        case KEY_SPACE:
+            apply(minipomo_get_timer(&pomo).running ? CMD_PAUSE : CMD_START, 0,
+                  now_ms);
+            break;
+    }
 }
 
 EXPORT("app_save")
@@ -396,12 +446,17 @@ int app_save(void)
     if (!unsaved) {
         return -1;
     }
+    return minipomo_save(&pomo, io, sizeof io);
+}
+
+EXPORT("app_saved")
+void app_saved(void)
+{
     unsaved = false;
-    return minipomo_save(&pomo, io);
 }
 
 EXPORT("app_load")
-void app_load(int len)
+int app_load(int len)
 {
-    minipomo_load(&pomo, io, len);
+    return minipomo_load(&pomo, io, len);
 }

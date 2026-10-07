@@ -2,7 +2,8 @@
 #define UI_H
 
 #include "clay.h"
-#include "core/minipomo.h"
+#include "app/display.h"
+#include "core/text.h"
 #include "web/config.h"
 
 #define NO_ROW (-1)
@@ -13,8 +14,10 @@ enum cmd {
     CMD_PAUSE,
     CMD_SKIP,
     CMD_SET_TYPE,
-    CMD_PLAY,
+    CMD_START_TASK,
+    CMD_PAUSE_TASK,
     CMD_MARK_DONE,
+    CMD_MARK_UNDONE,
     CMD_EDIT,
     CMD_ADD,
     CMD_ESTIMATE_UP,
@@ -40,7 +43,6 @@ struct form {
 struct view {
     const struct minipomo *pomo;
     const struct form *form;
-    double now;
     float window_height;
     int minute_of_day;
     bool pointer_down;

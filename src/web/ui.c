@@ -1,6 +1,6 @@
 #include "web/ui.h"
 
-static const Clay_Color TYPE_COLOR[MINIPOMO_TYPE_COUNT] = {
+static const Clay_Color TYPE_COLOR[MINIPOMO_PHASE_COUNT] = {
     COL_FOCUS,
     COL_SHORT_BREAK,
     COL_LONG_BREAK,
@@ -51,13 +51,13 @@ void ui_grow(void)
 
 Clay_Color ui_type_color(const struct minipomo *p)
 {
-    return TYPE_COLOR[minipomo_current_type(p)];
+    return TYPE_COLOR[minipomo_get_timer(p).phase];
 }
 
 void page(const struct view *v)
 {
     Clay_Color white = COL_WHITE;
-    double fraction = minipomo_fraction_left(v->pomo, v->now);
+    double fraction = app_fraction_left(v->pomo);
     CLAY(CLAY_ID(ID_PAGE), {
         .layout = {
             .sizing = { CLAY_SIZING_GROW(0),
